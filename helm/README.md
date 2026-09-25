@@ -46,6 +46,17 @@ Reference the pool through `spec.substrate.workerPoolRef` on a Harness in the sa
 **Note**: MicroVM requires a `microvm` SandboxConfig, runtime assets, and KVM-capable
 workers. kagent does not install these prerequisites.
 
+A Harness may add Linux capabilities to its runtime container through
+`spec.workload.securityContext.capabilities.add`, but the controller honors only
+what its operator allowlists (empty by default):
+
+```yaml
+controller:
+  substrate:
+    enabled: true
+    allowedActorCapabilities: ["SETFCAP"]
+```
+
 ### Using Make
 
 ```bash

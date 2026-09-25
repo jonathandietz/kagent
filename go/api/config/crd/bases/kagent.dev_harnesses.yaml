@@ -330,6 +330,50 @@ spec:
                       digest.
                     pattern: ^[^[:space:]@]+@sha256:[a-f0-9]{64}$
                     type: string
+                  securityContext:
+                    description: |-
+                      SecurityContext adjusts the runtime container's security settings inside
+                      its Substrate sandbox. Omitted keeps Substrate's defaults.
+                    properties:
+                      capabilities:
+                        description: |-
+                          Capabilities adjusts the runtime process's Linux capabilities relative to
+                          Substrate's default set for an actor container. The controller honors an
+                          addition only when its operator has allowlisted that capability.
+                        properties:
+                          add:
+                            description: Add lists capabilities granted on top of
+                              the default set.
+                            items:
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[A-Z][A-Z0-9_]*$
+                              type: string
+                            maxItems: 16
+                            type: array
+                            x-kubernetes-list-type: set
+                          drop:
+                            description: |-
+                              Drop lists capabilities removed from the default set. ALL drops every
+                              default capability.
+                            items:
+                              maxLength: 63
+                              minLength: 1
+                              pattern: ^[A-Z][A-Z0-9_]*$
+                              type: string
+                            maxItems: 16
+                            type: array
+                            x-kubernetes-list-type: set
+                        type: object
+                        x-kubernetes-validations:
+                        - message: add does not accept ALL; name the individual capabilities
+                            the runtime needs
+                          rule: '!has(self.add) || !self.add.exists(c, c == ''ALL'')'
+                        - message: capabilities are named without the CAP_ prefix
+                            (for example SETFCAP)
+                          rule: (!has(self.add) || !self.add.exists(c, c.startsWith('CAP_')))
+                            && (!has(self.drop) || !self.drop.exists(c, c.startsWith('CAP_')))
+                    type: object
                 required:
                 - image
                 type: object

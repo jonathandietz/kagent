@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/kagent-dev/kagent/go/core/internal/controller/apiclient"
+	"github.com/kagent-dev/kagent/go/core/internal/substrate"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/krt"
 	"k8s.io/client-go/rest"
@@ -19,15 +20,32 @@ type Runtime struct {
 	Collections Collections
 }
 
+// RuntimeOption adjusts how the collection graph is built.
+type RuntimeOption func(*runtimeConfig)
+
+type runtimeConfig struct {
+	actorPolicy substrate.ActorPolicy
+}
+
+// WithActorPolicy sets the operator's allowlist for Harness-requested actor
+// adjustments. The default policy grants nothing.
+func WithActorPolicy(policy substrate.ActorPolicy) RuntimeOption {
+	return func(c *runtimeConfig) { c.actorPolicy = policy }
+}
+
 // NewRuntime creates the shared KRT client and collection graph. Handlers are
 // deliberately registered separately at the eventual application boundary.
-func NewRuntime(config *rest.Config, watchNamespaces []string, stop <-chan struct{}) (*Runtime, error) {
+func NewRuntime(config *rest.Config, watchNamespaces []string, stop <-chan struct{}, opts ...RuntimeOption) (*Runtime, error) {
+	var cfg runtimeConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
 	client, err := apiclient.New(config)
 	if err != nil {
 		return nil, fmt.Errorf("create KRT Kubernetes client: %w", err)
 	}
 	options := krt.NewOptionsBuilder(stop, "kagent", krt.GlobalDebugHandler)
-	collections := NewCollections(client, watchNamespaces, options)
+	collections := NewCollections(client, watchNamespaces, cfg.actorPolicy, options)
 	return &Runtime{Client: client, Options: options, Collections: collections}, nil
 }
 

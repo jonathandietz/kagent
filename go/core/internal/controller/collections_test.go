@@ -9,6 +9,7 @@ import (
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/database"
+	"github.com/kagent-dev/kagent/go/core/internal/substrate"
 	v2translator "github.com/kagent-dev/kagent/go/core/internal/translator"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -94,7 +95,7 @@ func TestReconciliationCollectionsCompileAndObserveRevision(t *testing.T) {
 			AgentTemplates: collections.AgentTemplates, ResolvedModelConfigs: collections.ResolvedModelConfigs,
 			RemoteMCPServers: collections.RemoteMCPServers, ConfigMaps: collections.ConfigMaps,
 			Secrets: collections.Secrets, WorkerPools: collections.WorkerPools,
-		}, collections.PairRuntimeObservations, opts,
+		}, collections.PairRuntimeObservations, substrate.ActorPolicy{}, opts,
 	)
 	collections.AgentTemplateStatuses = newAgentTemplateStatuses(collections.AgentTemplates, collections.Reconciliations, opts)
 
@@ -243,7 +244,7 @@ func TestReconciliationWorkerPoolSandboxClass(t *testing.T) {
 				AgentTemplates: templates, ResolvedModelConfigs: resolvedModels,
 				RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
 				ConfigMaps:       configMaps, Secrets: secrets, WorkerPools: workerPools,
-			}, observations, opts)
+			}, observations, substrate.ActorPolicy{}, opts)
 			key := "team-a/assistant/" + string(harnessType)
 			waitFor(t, func() bool {
 				state := reconciliations.GetKey(key)
@@ -378,7 +379,7 @@ func TestClaudeReconciliationCompilesActorTemplate(t *testing.T) {
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
 			ConfigMaps:       configMaps, Secrets: secrets,
 			WorkerPools: krttest.GetMockCollection[*atev1alpha1.WorkerPool](mock),
-		}, krttest.GetMockCollection[PairRuntimeObservation](mock), opts,
+		}, krttest.GetMockCollection[PairRuntimeObservation](mock), substrate.ActorPolicy{}, opts,
 	)
 	waitFor(t, func() bool {
 		states := reconciliations.List()
@@ -434,7 +435,7 @@ func TestCodexReconciliationCompilesActorTemplate(t *testing.T) {
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
 			ConfigMaps:       configMaps, Secrets: secrets,
 			WorkerPools: krttest.GetMockCollection[*atev1alpha1.WorkerPool](mock),
-		}, krttest.GetMockCollection[PairRuntimeObservation](mock), opts,
+		}, krttest.GetMockCollection[PairRuntimeObservation](mock), substrate.ActorPolicy{}, opts,
 	)
 	waitFor(t, func() bool {
 		states := reconciliations.List()
@@ -487,7 +488,7 @@ func TestReconciliationTracksSharedAgentTemplate(t *testing.T) {
 			RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
 			ConfigMaps:       configMaps, Secrets: secrets,
 			WorkerPools: krttest.GetMockCollection[*atev1alpha1.WorkerPool](mock),
-		}, krttest.GetMockCollection[PairRuntimeObservation](mock), opts,
+		}, krttest.GetMockCollection[PairRuntimeObservation](mock), substrate.ActorPolicy{}, opts,
 	)
 	var initial string
 	waitFor(t, func() bool {
@@ -552,4 +553,79 @@ func waitFor(t *testing.T, condition func() bool) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("condition did not become true")
+}
+
+func TestReconciliationCollectionsEnforceActorCapabilityPolicy(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		policy  substrate.ActorPolicy
+		failure *ReconciliationFailure
+	}{
+		{name: "refused by the default policy", failure: &ReconciliationFailure{
+			Condition: kagentv1alpha3.AgentTemplateConditionCompatible, Reason: "CapabilityNotAllowed",
+			Message: `capability "SETFCAP" is not in the controller's actor capability allowlist`,
+		}},
+		{name: "granted by the operator", policy: substrate.ActorPolicy{AllowedCapabilities: []string{"SETFCAP"}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			stop := make(chan struct{})
+			t.Cleanup(func() { close(stop) })
+			opts := krt.NewOptionsBuilder(stop, "test", nil)
+
+			template := &kagentv1alpha3.AgentTemplate{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "assistant", UID: "template-uid", Labels: map[string]string{"runtime": "python"}},
+				Spec: kagentv1alpha3.AgentTemplateSpec{
+					ModelConfig:  &corev1.LocalObjectReference{Name: "model"},
+					SystemPrompt: "help",
+				},
+			}
+			requesting := harness("team-a", "kagent", map[string]string{"runtime": "python"})
+			requesting.UID = "harness-uid"
+			requesting.Spec.Kagent = &kagentv1alpha3.KagentHarness{}
+			requesting.Spec.Workload.Image = "example.com/kagent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+			requesting.Spec.Workload.SecurityContext = &kagentv1alpha3.HarnessSecurityContext{
+				Capabilities: &kagentv1alpha3.HarnessLinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}},
+			}
+			requesting.Spec.Substrate = kagentv1alpha3.HarnessSubstratePolicy{
+				WorkerPoolRef:  corev1.LocalObjectReference{Name: "default"},
+				SnapshotPolicy: kagentv1alpha3.HarnessSnapshotPolicy{Location: "snapshots"},
+			}
+			modelConfigs := krt.NewStaticCollection(nil, []*kagentv1alpha3.ModelConfig{{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "model"}, Spec: kagentv1alpha3.ModelConfigSpec{Provider: kagentv1alpha3.ModelProviderOpenAI, Model: "gpt-5"}}}, opts.WithName("ModelConfigs")...)
+			mock := krttest.NewMock(t, []any{
+				template,
+				requesting,
+				&atev1alpha1.WorkerPool{ObjectMeta: metav1.ObjectMeta{Namespace: "team-a", Name: "default"}},
+			})
+			templates := krttest.GetMockCollection[*kagentv1alpha3.AgentTemplate](mock)
+			configMaps := krttest.GetMockCollection[*corev1.ConfigMap](mock)
+			secrets := krttest.GetMockCollection[*corev1.Secret](mock)
+			_, resolvedModels := newModelConfigReconciliations(modelConfigs, configMaps, secrets, opts)
+			pairs := newPairCollection(templates, krttest.GetMockCollection[*kagentv1alpha3.Harness](mock), opts)
+			reconciliations := newPairReconciliations(pairs, v2translator.Collections{
+				AgentTemplates: templates, ResolvedModelConfigs: resolvedModels,
+				RemoteMCPServers: krttest.GetMockCollection[*kagentv1alpha3.RemoteMCPServer](mock),
+				ConfigMaps:       configMaps, Secrets: secrets,
+				WorkerPools: krttest.GetMockCollection[*atev1alpha1.WorkerPool](mock),
+			}, krt.NewStaticCollection[PairRuntimeObservation](nil, nil, opts.WithName("PairRuntimeObservations")...), tt.policy, opts)
+
+			key := "team-a/assistant/kagent"
+			waitFor(t, func() bool {
+				state := reconciliations.GetKey(key)
+				return state != nil && state.Revision != nil && (state.Failure != nil || state.DesiredActorTemplate != nil)
+			})
+			state := reconciliations.GetKey(key)
+			require.Equal(t, &v2translator.LinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}, state.Revision.Capabilities, "the request compiles into the revision either way")
+			require.False(t, state.RevisionID.IsZero())
+			require.Equal(t, tt.failure, state.Failure)
+			if tt.failure != nil {
+				require.Nil(t, state.DesiredActorTemplate, "a refused request produces no desired ActorTemplate")
+				require.False(t, state.canPrepare())
+				return
+			}
+			securityContext := state.DesiredActorTemplate.GetContainers()[0].GetSecurityContext()
+			require.Equal(t, []string{"SETFCAP"}, securityContext.GetCapabilities().GetAdd())
+			require.Equal(t, []string{"NET_BIND_SERVICE"}, securityContext.GetCapabilities().GetDrop())
+			require.True(t, state.canPrepare())
+		})
+	}
 }

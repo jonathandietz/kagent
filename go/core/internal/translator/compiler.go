@@ -117,6 +117,7 @@ func (c *Compiler) CompileAgentTemplate(ctx context.Context, harness *v1alpha3.H
 		return nil, &WorkerPoolNotFoundError{WorkerPool: workerKey}
 	}
 	result.SandboxClass = (*workerPool).Spec.SandboxClass
+	result.Capabilities = LinuxCapabilitiesFor(harness.Spec.Workload.SecurityContext)
 	return result, nil
 }
 

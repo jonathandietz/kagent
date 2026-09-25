@@ -6,6 +6,7 @@ import (
 
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
+	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
@@ -130,4 +131,39 @@ func TestRevisionDigestIncludesBinaryAgentCard(t *testing.T) {
 	revision.AgentCard.Name = string([]byte{0xff})
 	_, err = revision.Digest()
 	require.Error(t, err)
+}
+
+func TestRevisionDigestIncludesCapabilities(t *testing.T) {
+	revision := &Revision{Namespace: "agents", AgentTemplateName: "helper", HarnessName: "kagent"}
+	original, err := revision.Digest()
+	require.NoError(t, err)
+	require.Equal(t, "3edf8e1756778ce192e3c834e6ebd8e2421dc23e9d64ade7d6ee3c6d6897cd6d", original.String(), "revisions without capabilities keep their identity")
+
+	revision.Capabilities = &LinuxCapabilities{Add: []string{"SETFCAP"}}
+	added, err := revision.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, original, added, "adding a capability must create a new immutable revision")
+	require.Equal(t, &LinuxCapabilities{Add: []string{"SETFCAP"}}, revision.Capabilities, "hashing must not mutate the revision")
+
+	revision.Capabilities = &LinuxCapabilities{Drop: []string{"SETFCAP"}}
+	dropped, err := revision.Digest()
+	require.NoError(t, err)
+	require.NotEqual(t, added, dropped, "add and drop of the same name are different revisions")
+
+	revision.Capabilities = nil
+	restored, err := revision.Digest()
+	require.NoError(t, err)
+	require.Equal(t, original, restored, "removing the request restores the original digest")
+}
+
+func TestLinuxCapabilitiesFor(t *testing.T) {
+	require.Nil(t, LinuxCapabilitiesFor(nil))
+	require.Nil(t, LinuxCapabilitiesFor(&v1alpha3.HarnessSecurityContext{}))
+	require.Nil(t, LinuxCapabilitiesFor(&v1alpha3.HarnessSecurityContext{Capabilities: &v1alpha3.HarnessLinuxCapabilities{}}), "an empty adjustment compiles like an omitted one")
+
+	requested := &v1alpha3.HarnessSecurityContext{Capabilities: &v1alpha3.HarnessLinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}}
+	capabilities := LinuxCapabilitiesFor(requested)
+	require.Equal(t, &LinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}, capabilities)
+	capabilities.Add[0] = "changed"
+	require.Equal(t, "SETFCAP", requested.Capabilities.Add[0], "the revision must not alias the public object")
 }

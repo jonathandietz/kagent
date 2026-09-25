@@ -989,3 +989,30 @@ tests:
           content:
             name: METRICS_BIND_ADDRESS
             value: "0"
+
+  - it: should pass the actor capability allowlist to the controller when substrate is enabled
+    template: controller-deployment.yaml
+    set:
+      controller:
+        substrate:
+          enabled: true
+          allowedActorCapabilities: ["SETFCAP", "SETUID"]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SUBSTRATE_ALLOWED_ACTOR_CAPABILITIES
+            value: "SETFCAP,SETUID"
+
+  - it: should grant no actor capabilities by default when substrate is enabled
+    template: controller-deployment.yaml
+    set:
+      controller:
+        substrate:
+          enabled: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: SUBSTRATE_ALLOWED_ACTOR_CAPABILITIES
+            value: ""

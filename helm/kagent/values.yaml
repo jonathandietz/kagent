@@ -420,6 +420,12 @@ controller:
     defaultWorkerPool:
       namespace: ""
       name: ""
+    # allowedActorCapabilities lists the Linux capabilities (without the CAP_
+    # prefix) a Harness may add to its runtime container through
+    # spec.workload.securityContext.capabilities.add. Empty grants nothing: a
+    # Harness requesting a capability outside this list reports
+    # Compatible=False with reason CapabilityNotAllowed. Drops need no allowance.
+    allowedActorCapabilities: []
     # Example when enabled:
     #   enabled: true
     #   ateApiEndpoint: "dns:///api.ate-system.svc:443"

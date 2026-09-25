@@ -163,3 +163,42 @@ func TestActorTemplateSpecEqualIgnoresServerFields(t *testing.T) {
 		t.Fatal("different container image was accepted")
 	}
 }
+
+func TestActorTemplateSecurityContext(t *testing.T) {
+	base := func() *translator.Revision {
+		return &translator.Revision{
+			Namespace: "agents", AgentTemplateName: "helper", HarnessName: "kagent", WorkerPoolName: "pool",
+			AgentCard: &a2apb.AgentCard{Name: "helper", Version: "v1", Capabilities: &a2apb.AgentCapabilities{Streaming: new(true)},
+				SupportedInterfaces: []*a2apb.AgentInterface{{Url: "http://127.0.0.1:80", ProtocolBinding: "GRPC", ProtocolVersion: "1.0"}},
+				DefaultInputModes:   []string{"text"}, DefaultOutputModes: []string{"text"},
+			},
+		}
+	}
+	unchanged := base()
+	id, err := unchanged.Digest()
+	require.NoError(t, err)
+	defaultTemplate, err := ActorTemplateForRevision(unchanged, id)
+	require.NoError(t, err)
+	require.Nil(t, defaultTemplate.GetContainers()[0].GetSecurityContext(), "no request keeps Substrate's default capability set")
+
+	empty := base()
+	empty.Capabilities = &translator.LinuxCapabilities{}
+	emptyTemplate, err := ActorTemplateForRevision(empty, id)
+	require.NoError(t, err)
+	require.Nil(t, emptyTemplate.GetContainers()[0].GetSecurityContext(), "an empty adjustment is no adjustment")
+	require.True(t, ActorTemplateSpecEqual(defaultTemplate, emptyTemplate))
+
+	adjusted := base()
+	adjusted.Capabilities = &translator.LinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}
+	adjustedID, err := adjusted.Digest()
+	require.NoError(t, err)
+	adjustedTemplate, err := ActorTemplateForRevision(adjusted, adjustedID)
+	require.NoError(t, err)
+	securityContext := adjustedTemplate.GetContainers()[0].GetSecurityContext()
+	require.Equal(t, []string{"SETFCAP"}, securityContext.GetCapabilities().GetAdd())
+	require.Equal(t, []string{"NET_BIND_SERVICE"}, securityContext.GetCapabilities().GetDrop())
+	require.False(t, ActorTemplateSpecEqual(defaultTemplate, adjustedTemplate), "a capability change is an immutable template change")
+
+	adjusted.Capabilities.Add[0] = "changed"
+	require.Equal(t, []string{"SETFCAP"}, securityContext.GetCapabilities().GetAdd(), "the template must not alias the revision")
+}

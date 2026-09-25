@@ -9,6 +9,7 @@ import (
 
 	a2apb "github.com/a2aproject/a2a-go/v2/a2apb/v1"
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
+	"github.com/kagent-dev/kagent/go/api/v1alpha3"
 	"github.com/kagent-dev/kagent/go/core/internal/egress"
 	"google.golang.org/protobuf/proto"
 	corev1 "k8s.io/api/core/v1"
@@ -59,6 +60,10 @@ type Revision struct {
 	SandboxClass     atev1alpha1.SandboxClass
 	SnapshotLocation string
 
+	// Capabilities is the Harness-requested adjustment to the runtime
+	// container's Linux capabilities, or nil for Substrate's default set.
+	Capabilities *LinuxCapabilities
+
 	// Provenance identifies non-secret Kubernetes inputs. Gateway-fetched
 	// credential values are deliberately excluded from revision identity.
 	Provenance json.RawMessage
@@ -105,12 +110,14 @@ func (r *Revision) Digest() (RevisionID, error) {
 		Credentials        []egress.Credential      `json:"credentials,omitempty"`
 		EgressDestinations []string                 `json:"egressDestinations"`
 		SandboxClass       atev1alpha1.SandboxClass `json:"sandboxClass,omitempty"`
+		Capabilities       *LinuxCapabilities       `json:"capabilities,omitempty"`
 	}{
 		Namespace: r.Namespace, AgentTemplateName: r.AgentTemplateName, HarnessName: r.HarnessName,
 		Image: r.Image, Command: r.Command, Args: r.Args, Environment: r.Environment, ConfigJSON: r.ConfigJSON,
 		WorkerPoolName: r.WorkerPoolName, SnapshotLocation: r.SnapshotLocation, Provenance: r.Provenance,
 		Credentials: r.Credentials, EgressDestinations: r.EgressDestinations,
 		SandboxClass: sandboxClass,
+		Capabilities: r.Capabilities,
 	})
 	if err != nil {
 		return RevisionID{}, fmt.Errorf("marshal runtime revision inputs: %w", err)
@@ -120,4 +127,35 @@ func (r *Revision) Digest() (RevisionID, error) {
 		return RevisionID{}, fmt.Errorf("marshal runtime revision Agent Card: %w", err)
 	}
 	return RevisionID(sha256.Sum256(append(raw, card...))), nil
+}
+
+// LinuxCapabilities is the Harness-requested adjustment to the runtime
+// container's Linux capabilities, named without the CAP_ prefix. Drop applies
+// before add. Nil requests Substrate's default set and is omitted from the
+// revision digest, so revisions that never mention capabilities keep their
+// identity byte-for-byte.
+type LinuxCapabilities struct {
+	Add  []string `json:"add,omitempty"`
+	Drop []string `json:"drop,omitempty"`
+}
+
+// LinuxCapabilitiesFor projects a Harness securityContext onto the revision.
+// It returns nil when nothing is requested, so an empty adjustment and an
+// omitted one compile to the same revision.
+func LinuxCapabilitiesFor(securityContext *v1alpha3.HarnessSecurityContext) *LinuxCapabilities {
+	if securityContext == nil || securityContext.Capabilities == nil {
+		return nil
+	}
+	requested := securityContext.Capabilities
+	if len(requested.Add) == 0 && len(requested.Drop) == 0 {
+		return nil
+	}
+	capabilities := &LinuxCapabilities{}
+	if len(requested.Add) > 0 {
+		capabilities.Add = append([]string(nil), requested.Add...)
+	}
+	if len(requested.Drop) > 0 {
+		capabilities.Drop = append([]string(nil), requested.Drop...)
+	}
+	return capabilities
 }
