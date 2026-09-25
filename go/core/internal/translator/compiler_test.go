@@ -478,3 +478,82 @@ func TestCompileAgentTemplateRejectsInvalidSharedTrees(t *testing.T) {
 		require.ErrorContains(t, err, "Dedicated")
 	})
 }
+
+func TestCompileAgentTemplateCarriesWorkloadCapabilities(t *testing.T) {
+	// The shared compiler applies the request after the harness compiler
+	// runs, so the harness types this helper registers stand in for all four.
+	for _, harnessType := range []v2translator.HarnessType{
+		v2translator.HarnessTypeKagent, v2translator.HarnessTypeBYO,
+	} {
+		t.Run(string(harnessType), func(t *testing.T) {
+			harness := &v1alpha3.Harness{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: string(harnessType)},
+				Spec: v1alpha3.HarnessSpec{
+					AllowedAgentTemplates: &v1alpha3.HarnessAgentTemplateAdmission{Selector: metav1.LabelSelector{}},
+					Workload:              v1alpha3.HarnessWorkload{Image: "example.com/agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+					Substrate: v1alpha3.HarnessSubstratePolicy{
+						WorkerPoolRef: corev1.LocalObjectReference{Name: "selected"}, SnapshotPolicy: v1alpha3.HarnessSnapshotPolicy{Location: "snapshots"},
+					},
+				},
+			}
+			template := &v1alpha3.AgentTemplate{
+				ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "assistant"},
+				Spec:       v1alpha3.AgentTemplateSpec{ModelConfig: &corev1.LocalObjectReference{Name: "default-model"}, SystemPrompt: "help"},
+			}
+			model := modelConfig()
+			model.Spec.APIKeySecret, model.Spec.APIKeySecretKey = "model-auth", "api-key"
+			switch harnessType {
+			case v2translator.HarnessTypeKagent:
+				harness.Spec.Kagent = &v1alpha3.KagentHarness{}
+			case v2translator.HarnessTypeCodex:
+				harness.Spec.Codex = &v1alpha3.CodexHarness{}
+				responses := v1alpha3.OpenAIAPIFormatResponses
+				model.Spec.OpenAI = &v1alpha3.OpenAIConfig{APIFormat: &responses}
+			case v2translator.HarnessTypeClaude:
+				harness.Spec.Claude = &v1alpha3.ClaudeHarness{}
+				model.Spec.Provider, model.Spec.Model = v1alpha3.ModelProviderAnthropic, "claude-sonnet-4-5"
+			case v2translator.HarnessTypeBYO:
+				harness.Spec.BYO = &v1alpha3.BYOHarness{}
+				harness.Spec.Workload.Command = []string{"/agent"}
+				template.Spec.ModelConfig = nil
+			}
+			objects := []any{
+				model,
+				&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Namespace: "test", Name: "model-auth"}, Data: map[string][]byte{"api-key": []byte("secret")}},
+			}
+			baseline, err := compiler(t, objects...).CompileAgentTemplate(t.Context(), harness, template)
+			require.NoError(t, err)
+			require.Nil(t, baseline.Capabilities, "an omitted security context requests nothing")
+			baselineDigest, err := baseline.Digest()
+			require.NoError(t, err)
+
+			// Any Harness edit changes provenance; the comparison below is about
+			// every other compiled input.
+			withoutProvenance := func(result *v2translator.CompileResult) v2translator.CompileResult {
+				copied := *result
+				copied.Provenance = nil
+				return copied
+			}
+			harness.Spec.Workload.SecurityContext = &v1alpha3.HarnessSecurityContext{Capabilities: &v1alpha3.HarnessLinuxCapabilities{}}
+			empty, err := compiler(t, objects...).CompileAgentTemplate(t.Context(), harness, template)
+			require.NoError(t, err)
+			_, err = empty.Digest() // marshals the Agent Card, as the baseline's digest did
+			require.NoError(t, err)
+			require.Nil(t, empty.Capabilities, "an empty adjustment requests nothing")
+			require.Equal(t, withoutProvenance(baseline), withoutProvenance(empty), "an empty adjustment changes no other compiled input")
+
+			harness.Spec.Workload.SecurityContext = &v1alpha3.HarnessSecurityContext{Capabilities: &v1alpha3.HarnessLinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}}
+			original := harness.DeepCopy()
+			adjusted, err := compiler(t, objects...).CompileAgentTemplate(t.Context(), harness, template)
+			require.NoError(t, err)
+			require.Equal(t, original, harness, "compilation must not mutate the Harness")
+			require.Equal(t, &v2translator.LinuxCapabilities{Add: []string{"SETFCAP"}, Drop: []string{"NET_BIND_SERVICE"}}, adjusted.Capabilities)
+			adjustedDigest, err := adjusted.Digest()
+			require.NoError(t, err)
+			require.NotEqual(t, baselineDigest, adjustedDigest, "a capability change is a new revision")
+			expected := withoutProvenance(baseline)
+			expected.Capabilities = adjusted.Capabilities
+			require.Equal(t, expected, withoutProvenance(adjusted), "the adjustment must not change other compiled inputs or warnings")
+		})
+	}
+}

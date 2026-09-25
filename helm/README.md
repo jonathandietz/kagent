@@ -21,6 +21,17 @@ helm install kagent ./helm/kagent/ --namespace kagent --set providers.default=an
 helm install kagent ./helm/kagent/ --namespace kagent --set providers.default=azureOpenAI  --set providers.azureOpenAI.apiKey=your-openai-api-key
 ```
 
+A Harness may add Linux capabilities to its runtime container through
+`spec.workload.securityContext.capabilities.add`, but the controller honors only
+what its operator allowlists (empty by default):
+
+```yaml
+controller:
+  substrate:
+    enabled: true
+    allowedActorCapabilities: ["SETFCAP"]
+```
+
 ### Using Make
 
 ```bash

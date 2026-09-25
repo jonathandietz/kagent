@@ -151,6 +151,8 @@ spec:
               value: {{ .Values.controller.substrate.defaultWorkerPool.namespace | default (include "kagent.namespace" .) | quote }}
             - name: SUBSTRATE_DEFAULT_WORKERPOOL_NAME
               value: {{ .Values.controller.substrate.defaultWorkerPool.name | default (ternary .Values.substrateWorkerPool.name "" .Values.substrateWorkerPool.create) | quote }}
+            - name: SUBSTRATE_ALLOWED_ACTOR_CAPABILITIES
+              value: {{ join "," (.Values.controller.substrate.allowedActorCapabilities | default list) | quote }}
             {{- end }}
           envFrom:
             - configMapRef:

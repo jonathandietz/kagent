@@ -86,6 +86,9 @@ func ActorTemplateForRevision(spec *translator.Revision, revisionID translator.R
 			Command: append([]string(nil), spec.Command...),
 			Args:    append([]string(nil), spec.Args...),
 			Env:     actorEnv,
+			// Nil keeps Substrate's default capability set, exactly as a
+			// template that never mentions a security context.
+			SecurityContext: securityContextFor(spec.Capabilities),
 			Readyz: &ateapipb.ContainerReadyz{HttpGet: &ateapipb.HTTPGetAction{
 				Path: "/readyz",
 				Port: 8081,
@@ -107,6 +110,19 @@ func ActorTemplateForRevision(spec *translator.Revision, revisionID translator.R
 		},
 	}
 	return template, nil
+}
+
+// securityContextFor projects the revision's capability adjustment onto the
+// ate-api container. Substrate resolves the effective set as its default minus
+// drop plus add.
+func securityContextFor(capabilities *translator.LinuxCapabilities) *ateapipb.SecurityContext {
+	if capabilities == nil || (len(capabilities.Add) == 0 && len(capabilities.Drop) == 0) {
+		return nil
+	}
+	return &ateapipb.SecurityContext{Capabilities: &ateapipb.Capabilities{
+		Add:  append([]string(nil), capabilities.Add...),
+		Drop: append([]string(nil), capabilities.Drop...),
+	}}
 }
 
 // ActorTemplateSpecEqual compares the client-owned immutable fields of two

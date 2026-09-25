@@ -240,7 +240,9 @@ func Run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return fmt.Errorf("create controller manager: %w", err)
 	}
-	runtime, err := v2controller.NewRuntime(kubeConfig, watchNamespaces, ctx.Done())
+	runtime, err := v2controller.NewRuntime(kubeConfig, watchNamespaces, ctx.Done(), v2controller.WithActorPolicy(substrate.ActorPolicy{
+		AllowedCapabilities: substrate.ParseAllowedCapabilities(os.Getenv("SUBSTRATE_ALLOWED_ACTOR_CAPABILITIES")),
+	}))
 	if err != nil {
 		return err
 	}

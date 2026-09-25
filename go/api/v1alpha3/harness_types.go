@@ -126,6 +126,50 @@ type HarnessWorkload struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +optional
 	Args []string `json:"args,omitempty"`
+
+	// SecurityContext adjusts the runtime container's security settings inside
+	// its Substrate sandbox. Omitted keeps Substrate's defaults.
+	// +optional
+	SecurityContext *HarnessSecurityContext `json:"securityContext,omitempty"`
+}
+
+// HarnessSecurityContext adjusts the runtime container's security settings
+// inside its Substrate sandbox. It models the subset of Substrate's container
+// securityContext that a Harness may request; the sandbox class, the worker
+// pod, and the host are unchanged.
+type HarnessSecurityContext struct {
+	// Capabilities adjusts the runtime process's Linux capabilities relative to
+	// Substrate's default set for an actor container. The controller honors an
+	// addition only when its operator has allowlisted that capability.
+	// +optional
+	Capabilities *HarnessLinuxCapabilities `json:"capabilities,omitempty"`
+}
+
+// HarnessLinuxCapabilities names Linux capabilities without the CAP_ prefix, as
+// Substrate's ActorTemplate API does. Drop applies before add, so a capability
+// named in both is granted.
+//
+// +kubebuilder:validation:XValidation:rule="!has(self.add) || !self.add.exists(c, c == 'ALL')",message="add does not accept ALL; name the individual capabilities the runtime needs"
+// +kubebuilder:validation:XValidation:rule="(!has(self.add) || !self.add.exists(c, c.startsWith('CAP_'))) && (!has(self.drop) || !self.drop.exists(c, c.startsWith('CAP_')))",message="capabilities are named without the CAP_ prefix (for example SETFCAP)"
+type HarnessLinuxCapabilities struct {
+	// Add lists capabilities granted on top of the default set.
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[A-Z][A-Z0-9_]*$`
+	// +listType=set
+	// +optional
+	Add []string `json:"add,omitempty"`
+
+	// Drop lists capabilities removed from the default set. ALL drops every
+	// default capability.
+	// +kubebuilder:validation:MaxItems=16
+	// +kubebuilder:validation:items:MinLength=1
+	// +kubebuilder:validation:items:MaxLength=63
+	// +kubebuilder:validation:items:Pattern=`^[A-Z][A-Z0-9_]*$`
+	// +listType=set
+	// +optional
+	Drop []string `json:"drop,omitempty"`
 }
 
 // HarnessEnvVar configures one runtime environment variable.

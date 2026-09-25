@@ -106,7 +106,12 @@ func (c *Compiler) CompileAgentTemplate(ctx context.Context, harness *v1alpha3.H
 	if err != nil {
 		return nil, err
 	}
-	return harnessCompiler.Compile(ctx, input)
+	result, err := harnessCompiler.Compile(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	result.Capabilities = LinuxCapabilitiesFor(harness.Spec.Workload.SecurityContext)
+	return result, nil
 }
 
 func harnessType(harness *v1alpha3.Harness) HarnessType {

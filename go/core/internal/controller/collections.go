@@ -4,6 +4,7 @@ import (
 	atev1alpha1 "github.com/agent-substrate/substrate/pkg/api/v1alpha1"
 	"github.com/agent-substrate/substrate/pkg/proto/ateapipb"
 	kagentv1alpha3 "github.com/kagent-dev/kagent/go/api/v1alpha3"
+	"github.com/kagent-dev/kagent/go/core/internal/substrate"
 	v2translator "github.com/kagent-dev/kagent/go/core/internal/translator"
 	"istio.io/istio/pkg/kube"
 	"istio.io/istio/pkg/kube/controllers"
@@ -59,7 +60,7 @@ func (p AgentTemplateHarnessPair) ResourceName() string {
 
 // NewCollections creates the complete read-only input graph. An empty
 // watchNamespaces list watches all namespaces.
-func NewCollections(client kube.Client, watchNamespaces []string, opts krt.OptionsBuilder) Collections {
+func NewCollections(client kube.Client, watchNamespaces []string, policy substrate.ActorPolicy, opts krt.OptionsBuilder) Collections {
 	agentTemplates := typedCollection[*kagentv1alpha3.AgentTemplate](client, watchNamespaces, "AgentTemplates", opts)
 	harnesses := typedCollection[*kagentv1alpha3.Harness](client, watchNamespaces, "Harnesses", opts)
 	modelConfigs := typedCollection[*kagentv1alpha3.ModelConfig](client, watchNamespaces, "ModelConfigs", opts)
@@ -74,7 +75,7 @@ func NewCollections(client kube.Client, watchNamespaces []string, opts krt.Optio
 		AgentTemplates: agentTemplates, ResolvedModelConfigs: resolvedModelConfigs, RemoteMCPServers: remoteMCPServers,
 		ConfigMaps: configMaps, Secrets: secrets, WorkerPools: workerPools,
 	}
-	reconciliations := newPairReconciliations(pairs, compilerCollections, pairRuntimeObservations, opts)
+	reconciliations := newPairReconciliations(pairs, compilerCollections, pairRuntimeObservations, policy, opts)
 	statuses := newAgentTemplateStatuses(agentTemplates, reconciliations, opts)
 
 	return Collections{

@@ -16,6 +16,42 @@ Both are `kagent.dev/v1alpha3` Kubernetes resources. Infrastructure-derived
 values such as runtime addresses and inferred egress do not belong in the public
 API.
 
+### Actor container capabilities
+
+Every harness type may adjust the Linux capabilities of its runtime container
+through `spec.workload.securityContext.capabilities`. Names omit the `CAP_`
+prefix, as Substrate's ActorTemplate API does; `drop` applies before `add`, and
+`ALL` is accepted only in `drop`:
+
+```yaml
+spec:
+  workload:
+    image: example.com/agent@sha256:...
+    securityContext:
+      capabilities:
+        add: ["SETFCAP"]
+```
+
+The compiler carries the adjustment into the revision, where it participates in
+revision identity (a Harness that never mentions a security context keeps its
+existing digest byte-for-byte), and the generated ActorTemplate sets the
+container's `securityContext`. Substrate resolves the effective set as its default
+(`AUDIT_WRITE`, `KILL`, `NET_BIND_SERVICE`) minus `drop` plus `add`.
+
+Additions are gated by the controller's operator. The controller honors only
+capabilities listed in `SUBSTRATE_ALLOWED_ACTOR_CAPABILITIES` (Helm:
+`controller.substrate.allowedActorCapabilities`), which is empty by default. A
+Harness requesting anything else reports `Compatible=False` with reason
+`CapabilityNotAllowed`, names the refused capability, and produces no desired
+ActorTemplate. Drops need no allowance: removing a default capability never
+widens the sandbox.
+
+The adjustment changes the process inside the sandbox only. It does not change
+the sandbox class, the worker pod's own security context, or anything on the
+host; the sandbox kernel enforces the capability. Use it for runtimes that need
+to create user namespaces or switch uids for their own child processes, and keep
+the allowlist to what those runtimes actually need.
+
 ## Prepared revision pipeline
 
 The v2 controller collects admitted Harness/AgentTemplate pairs and compiles each

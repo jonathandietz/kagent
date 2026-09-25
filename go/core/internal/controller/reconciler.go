@@ -55,6 +55,7 @@ func newPairReconciliations(
 	pairs krt.Collection[AgentTemplateHarnessPair],
 	collections v2translator.Collections,
 	pairRuntimeObservations krt.Collection[PairRuntimeObservation],
+	policy substrate.ActorPolicy,
 	opts krt.OptionsBuilder,
 ) krt.Collection[PairReconciliation] {
 	return krt.NewCollection(pairs, func(ctx krt.HandlerContext, pair AgentTemplateHarnessPair) *PairReconciliation {
@@ -80,6 +81,13 @@ func newPairReconciliations(
 		state.RevisionID, err = revision.Digest()
 		if err != nil {
 			state.Failure = &ReconciliationFailure{Condition: kagentv1alpha3.AgentTemplateConditionCompatible, Reason: "RevisionInvalid", Message: err.Error()}
+			return state
+		}
+		// The Harness requests; the controller's operator decides what an
+		// actor may be granted. A refused request is terminal for this
+		// revision, like an unsupported configuration, not a retryable fault.
+		if err := policy.Check(revision.Capabilities); err != nil {
+			state.Failure = &ReconciliationFailure{Condition: kagentv1alpha3.AgentTemplateConditionCompatible, Reason: "CapabilityNotAllowed", Message: err.Error()}
 			return state
 		}
 
